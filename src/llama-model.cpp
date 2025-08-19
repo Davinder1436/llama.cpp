@@ -1,4 +1,5 @@
 #include "llama-model.h"
+#include "llama-instrumentation.h"
 
 #include "llama-impl.h"
 #include "llama-mmap.h"
@@ -5988,6 +5989,7 @@ struct llm_build_llama : public llm_graph_context {
         ggml_tensor * inp_out_ids = build_inp_out_ids();
 
         for (int il = 0; il < n_layer; ++il) {
+            INSTR_BEGIN_STEP(std::string("layer_") + std::to_string(il), il);
             ggml_tensor * inpSA = inpL;
 
             // norm
@@ -6101,6 +6103,7 @@ struct llm_build_llama : public llm_graph_context {
 
             // input for next layer
             inpL = cur;
+            INSTR_END_STEP(std::string("layer_") + std::to_string(il));
         }
 
         cur = inpL;

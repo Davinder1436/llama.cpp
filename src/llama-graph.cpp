@@ -1,4 +1,5 @@
 #include "llama-graph.h"
+#include "llama-instrumentation.h"
 
 #include "llama-impl.h"
 #include "llama-batch.h"
@@ -529,6 +530,11 @@ llm_graph_context::llm_graph_context(const llm_graph_params & params) :
     }
 
 void llm_graph_context::cb(ggml_tensor * cur, const char * name, int il) const {
+    // Add instrumentation logging for all tensor operations
+    if (cur && name) {
+        INSTR_LOG_TENSOR(cur, std::string(name), "intermediate");
+    }
+    
     if (cb_func) {
         cb_func(ubatch, cur, name, il);
     }

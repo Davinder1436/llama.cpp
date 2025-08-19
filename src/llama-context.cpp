@@ -6,6 +6,7 @@
 #include "llama-memory.h"
 #include "llama-mmap.h"
 #include "llama-model.h"
+#include "llama-instrumentation.h"
 
 #include <cinttypes>
 #include <cstring>
@@ -946,13 +947,19 @@ int llama_context::encode(const llama_batch & batch_inp) {
 int llama_context::decode(const llama_batch & batch_inp) {
     GGML_ASSERT((!batch_inp.token && batch_inp.embd) || (batch_inp.token && !batch_inp.embd)); // NOLINT
 
+    // Begin instrumentation for decode step
+    INSTR_BEGIN_STEP("llama_decode", -1);
+    INSTR_LOG_PERF("batch_size", batch_inp.n_tokens, "tokens");
+
     if (!memory) {
         LLAMA_LOG_DEBUG("%s: cannot decode batches with this context (calling encode() instead)\n", __func__);
+        INSTR_END_STEP("Redirecting to encode due to no memory context");
         return encode(batch_inp);
     }
 
     if (batch_inp.n_tokens == 0) {
         LLAMA_LOG_ERROR("%s: n_tokens == 0\n", __func__);
+        INSTR_END_STEP("Error: no tokens to process");
         return -1;
     }
 
@@ -962,22 +969,32 @@ int llama_context::decode(const llama_batch & batch_inp) {
     const int64_t n_vocab = vocab.n_tokens();
     const int64_t n_embd  = hparams.n_embd;
 
+    // Log input tokens if available
+    if (batch_inp.token && g_llama_instr) {
+        INSTR_LOG_TOKENS_IN(batch_inp.token, batch_inp.n_tokens, &vocab);
+    }
+
     // when computing embeddings, all tokens are output
     const bool output_all = cparams.embeddings;
 
     if (!balloc->init(batch_inp, vocab, memory.get(), n_embd, cparams.kv_unified ? LLAMA_MAX_SEQ : cparams.n_seq_max, output_all)) {
         LLAMA_LOG_ERROR("%s: failed to initialize batch\n", __func__);
+        INSTR_END_STEP("Error: failed to initialize batch");
         return -1;
     }
 
     const uint32_t n_tokens_all  = balloc->get_n_tokens();
     const uint32_t n_outputs_all = balloc->get_n_outputs();
 
+    INSTR_LOG_PERF("n_tokens_all", n_tokens_all, "tokens");
+    INSTR_LOG_PERF("n_outputs_all", n_outputs_all, "outputs");
+
     if (output_all) {
         // require that all tokens are output
         if (n_outputs_all != n_tokens_all) {
             LLAMA_LOG_ERROR("%s: pooled embedding requires that all tokens are output (n_outputs_all = %d, n_tokens_all = %d)\n",
                     __func__, n_outputs_all, n_tokens_all);
+            INSTR_END_STEP("Error: output count mismatch");
             return -1;
         }
     }
@@ -1055,6 +1072,10 @@ int llama_context::decode(const llama_batch & batch_inp) {
 
     do {
         const auto & ubatch = mctx->get_ubatch();
+        
+        // Begin instrumentation for ubatch processing
+        INSTR_BEGIN_STEP("process_ubatch", -1);
+        INSTR_LOG_PERF("ubatch_tokens", ubatch.n_tokens, "tokens");
 
         // count the outputs in this ubatch
         {
@@ -1070,12 +1091,14 @@ int llama_context::decode(const llama_batch & batch_inp) {
 
             // needs to happen before the graph is built
             n_outputs = n_outputs_new;
+            INSTR_LOG_PERF("ubatch_outputs", n_outputs, "outputs");
         }
 
         ggml_status status;
         const auto * res = process_ubatch(ubatch, LLM_GRAPH_TYPE_DECODER, mctx.get(), status);
 
         if (!res) {
+            INSTR_END_STEP("Error: process_ubatch failed");
             // the last ubatch failed or was aborted -> remove all positions of that ubatch from the KV cache
             llama_pos pos_min[LLAMA_MAX_SEQ];
             for (int s = 0; s < LLAMA_MAX_SEQ; ++s) {
@@ -1114,12 +1137,22 @@ int llama_context::decode(const llama_batch & batch_inp) {
         auto * t_logits = res->get_logits();
         auto * t_embd   = cparams.embeddings ? res->get_embd() : nullptr;
 
+        // Log tensor metadata for key outputs
+        if (t_logits) {
+            INSTR_LOG_TENSOR(t_logits, "logits_computation", "output");
+        }
+        if (t_embd) {
+            INSTR_LOG_TENSOR(t_embd, "embeddings_computation", "output");
+        }
+
         if (t_embd && res->get_embd_pooled()) {
             t_embd = res->get_embd_pooled();
+            INSTR_LOG_TENSOR(t_embd, "pooled_embeddings", "output");
         }
 
         // extract logits
         if (t_logits && n_outputs > 0) {
+            INSTR_BEGIN_STEP("extract_logits", -1);
             ggml_backend_t backend_res = ggml_backend_sched_get_tensor_backend(sched.get(), t_logits);
             GGML_ASSERT(backend_res != nullptr);
             GGML_ASSERT(logits != nullptr);
@@ -1130,7 +1163,9 @@ int llama_context::decode(const llama_batch & batch_inp) {
                 GGML_ASSERT( n_outputs_prev + n_outputs <= n_outputs_all);
                 GGML_ASSERT((n_outputs_prev + n_outputs)*n_vocab <= (int64_t) logits_size);
                 ggml_backend_tensor_get_async(backend_res, t_logits, logits_out, 0, n_outputs*n_vocab*sizeof(float));
+                INSTR_LOG_PERF("logits_extracted", n_outputs * n_vocab, "elements");
             }
+            INSTR_END_STEP("Logits extraction completed");
         }
 
         // extract embeddings
@@ -1239,6 +1274,8 @@ int llama_context::decode(const llama_batch & batch_inp) {
                 output_ids[out_ids[i]] = i;
             }
         }
+        
+        INSTR_END_STEP("Completed ubatch processing");
     }
 
     // wait for the computation to finish (automatically done when obtaining the model output)
@@ -1250,6 +1287,7 @@ int llama_context::decode(const llama_batch & batch_inp) {
         ggml_backend_sched_reset(sched.get());
     }
 
+    INSTR_END_STEP("Decode completed successfully");
     return 0;
 }
 
@@ -2866,9 +2904,16 @@ int32_t llama_encode(
 int32_t llama_decode(
         llama_context * ctx,
           llama_batch   batch) {
+    // Log the main decode entry point
+    INSTR_BEGIN_STEP("llama_decode_api", -1);
+    INSTR_LOG_PERF("api_batch_size", batch.n_tokens, "tokens");
+    
     const int ret = ctx->decode(batch);
     if (ret != 0 && ret != 1) {
         LLAMA_LOG_ERROR("%s: failed to decode, ret = %d\n", __func__, ret);
+        INSTR_END_STEP("API decode failed with error code: " + std::to_string(ret));
+    } else {
+        INSTR_END_STEP("API decode completed successfully");
     }
 
     return ret;
