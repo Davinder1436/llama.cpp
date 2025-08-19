@@ -46,7 +46,7 @@ int main(int argc, char ** argv) {
         }
         
         // 5. Prepare the prompt
-        std::string prompt = "What is the meaning of life? Answer in one sentence.";
+        std::string prompt = "What is machine learning?";
         std::cout << "💭 Prompt: " << prompt << std::endl;
         
         // 6. Begin instrumented session
