@@ -1,0 +1,452 @@
+{
+  "llama_instrumentation_log_schema": {
+    "version": "1.0",
+    "description": "Comprehensive logging configuration for LLaMA.cpp instrumentation system",
+    "timestamp_format": "YYYY-MM-DD HH:MM:SS.sss",
+    "session_id_format": "sess_[8-char-hex]",
+    
+    "event_types": {
+      "session_start": {
+        "description": "Marks the beginning of an inference session",
+        "required_fields": [
+          "event", "timestamp", "session_id", "prompt", "model_info"
+        ],
+        "fields": {
+          "event": {
+            "type": "string",
+            "fixed_value": "session_start"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "ISO-8601-like with microseconds"
+          },
+          "session_id": {
+            "type": "string",
+            "pattern": "sess_[a-f0-9]{8}"
+          },
+          "prompt": {
+            "type": "string",
+            "description": "The input prompt text"
+          },
+          "model_info": {
+            "type": "object",
+            "properties": {
+              "n_vocab": {
+                "type": "number",
+                "description": "Vocabulary size",
+                "example_values": [262144]
+              },
+              "n_ctx_train": {
+                "type": "number", 
+                "description": "Training context size",
+                "example_values": [32768]
+              },
+              "n_embd": {
+                "type": "number",
+                "description": "Embedding dimension",
+                "example_values": [1152]
+              },
+              "n_layer": {
+                "type": "number",
+                "description": "Number of layers",
+                "example_values": [26]
+              },
+              "n_head": {
+                "type": "number",
+                "description": "Number of attention heads",
+                "example_values": [4]
+              }
+            }
+          }
+        }
+      },
+      
+      "session_end": {
+        "description": "Marks the end of an inference session",
+        "required_fields": [
+          "event", "timestamp", "session_id", "duration_ms", "total_steps", 
+          "input_token_count", "output_token_count"
+        ],
+        "fields": {
+          "event": {
+            "type": "string", 
+            "fixed_value": "session_end"
+          },
+          "duration_ms": {
+            "type": "number",
+            "description": "Total session duration in milliseconds"
+          },
+          "total_steps": {
+            "type": "number",
+            "description": "Total number of processing steps"
+          },
+          "input_token_count": {
+            "type": "number",
+            "description": "Number of input tokens processed"
+          },
+          "output_token_count": {
+            "type": "number", 
+            "description": "Number of output tokens generated"
+          }
+        }
+      },
+      
+      "step_begin": {
+        "description": "Marks the start of a processing step",
+        "required_fields": ["event", "timestamp", "step_id", "step_name", "layer_id", "session_id"],
+        "fields": {
+          "event": {
+            "type": "string",
+            "fixed_value": "step_begin"
+          },
+          "step_id": {
+            "type": "number",
+            "description": "Sequential step identifier"
+          },
+          "step_name": {
+            "type": "string",
+            "possible_values": [
+              "prompt_processing",
+              "token_generation_0", "token_generation_1", "token_generation_2",
+              "token_generation_3", "token_generation_4", "token_generation_5",
+              "token_generation_6", "token_generation_7", "token_generation_8",
+              "token_generation_9", "token_generation_10", "token_generation_11",
+              "token_generation_12", "token_generation_13", "token_generation_14",
+              "token_generation_15", "token_generation_16", "token_generation_17",
+              "token_generation_18", "token_generation_19", "token_generation_20",
+              "token_generation_21", "token_generation_22"
+            ],
+            "pattern": "prompt_processing|token_generation_\\d+"
+          },
+          "layer_id": {
+            "type": "number",
+            "description": "Current layer being processed",
+            "typical_range": [0, 25]
+          }
+        }
+      },
+      
+      "step_end": {
+        "description": "Marks the end of a processing step with metrics",
+        "required_fields": ["event", "timestamp", "metrics", "session_id"],
+        "fields": {
+          "event": {
+            "type": "string",
+            "fixed_value": "step_end"
+          },
+          "metrics": {
+            "type": "object",
+            "properties": {
+              "step_name": {
+                "type": "string",
+                "description": "Name of the completed step"
+              },
+              "step_id": {
+                "type": "number",
+                "description": "Sequential step identifier"
+              },
+              "layer_id": {
+                "type": "number",
+                "description": "Layer that was processed"
+              },
+              "execution_time_us": {
+                "type": "number",
+                "description": "Execution time in microseconds",
+                "typical_range": [9000, 160000]
+              },
+              "inputs": {
+                "type": "array",
+                "description": "Input tensor metadata (typically empty)"
+              },
+              "outputs": {
+                "type": "array", 
+                "description": "Output tensor metadata (typically empty)"
+              },
+              "custom_metrics": {
+                "type": "object",
+                "description": "Additional custom metrics (typically empty)"
+              },
+              "notes": {
+                "type": "string",
+                "description": "Human-readable step description",
+                "example_values": [
+                  "Prompt processed successfully",
+                  "Token generated: \\n",
+                  "Token generated: Here",
+                  "Token generated: '",
+                  "Token generated: s",
+                  "Token generated:  a",
+                  "Token generated:  roadmap",
+                  "Token generated:  you",
+                  "Token generated:  can",
+                  "Token generated:  follow"
+                ]
+              }
+            }
+          }
+        }
+      },
+      
+      "sampling_state": {
+        "description": "Detailed sampling information for token generation",
+        "required_fields": ["event", "timestamp", "sampling", "session_id"],
+        "fields": {
+          "event": {
+            "type": "string",
+            "fixed_value": "sampling_state"
+          },
+          "sampling": {
+            "type": "object",
+            "properties": {
+              "logits_sample": {
+                "type": "array",
+                "items": "number",
+                "description": "Raw logit values for top token candidates",
+                "typical_length": 10,
+                "value_range": [12.0, 40.0]
+              },
+              "top_tokens": {
+                "type": "array", 
+                "items": "number",
+                "description": "Token IDs of most probable tokens",
+                "typical_length": 10,
+                "value_range": [0, 262143]
+              },
+              "top_probs": {
+                "type": "array",
+                "items": "number", 
+                "description": "Probability values for each top token",
+                "typical_length": 10,
+                "value_range": [0.000001, 0.999999]
+              },
+              "top_token_texts": {
+                "type": "array",
+                "items": "string",
+                "description": "Human-readable text for each token",
+                "typical_length": 10,
+                "example_values": [
+                  "\\n", "\\n", " ", "  ", "\\n\\n", " (", " A", " This",
+                  "Here", "Okay", "**", "This", "##", "1", "###", "---",
+                  "'", "'", " is", " are", "´", ",", " follows"
+                ]
+              },
+              "selected_token": {
+                "type": "number",
+                "description": "Token ID that was actually selected",
+                "value_range": [0, 262143]
+              },
+              "selected_prob": {
+                "type": "number",
+                "description": "Probability of the selected token",
+                "value_range": [0.0, 1.0]
+              },
+              "sampling_method": {
+                "type": "string",
+                "possible_values": ["greedy", "top_k", "top_p", "temperature"],
+                "description": "Sampling method used",
+                "typical_value": "greedy"
+              },
+              "sampling_params": {
+                "type": "object",
+                "description": "Additional sampling parameters (typically empty)"
+              },
+              "layer_details": {
+                "type": "array",
+                "description": "Detailed execution metrics for each layer",
+                "typical_length": 26,
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "layer_id": {
+                      "type": "number",
+                      "description": "Layer identifier",
+                      "range": [0, 25]
+                    },
+                    "layer_type": {
+                      "type": "string",
+                      "possible_values": ["attention", "feed_forward"],
+                      "description": "Type of layer operation"
+                    },
+                    "operation": {
+                      "type": "string",
+                      "possible_values": [
+                        "multi_head_self_attention", 
+                        "mlp_projection"
+                      ],
+                      "description": "Specific operation performed"
+                    },
+                    "execution_time_us": {
+                      "type": "number",
+                      "description": "Layer execution time in microseconds",
+                      "typical_range": [1000, 2250],
+                      "pattern": "Attention: 1000 + (layer_id * 100), FF: 1050 + (layer_id * 100)"
+                    },
+                    "layer_metrics": {
+                      "type": "object",
+                      "properties": {
+                        "attention_heads": {
+                          "type": "number",
+                          "possible_values": [0.0, 4.0],
+                          "description": "Number of attention heads (4.0 for attention, 0.0 for FF)"
+                        },
+                        "hidden_dim": {
+                          "type": "number",
+                          "fixed_value": 1152.0,
+                          "description": "Hidden dimension size"
+                        },
+                        "intermediate_dim": {
+                          "type": "number",
+                          "possible_values": [0.0, 6912.0],
+                          "description": "Intermediate dimension (0.0 for attention, 6912.0 for FF)"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      
+      "performance_metric": {
+        "description": "Individual performance metrics",
+        "required_fields": ["event", "timestamp", "metric_name", "value", "unit", "session_id"],
+        "fields": {
+          "event": {
+            "type": "string",
+            "fixed_value": "performance_metric"
+          },
+          "metric_name": {
+            "type": "string",
+            "possible_values": [
+              "token_probability",
+              "token_logit", 
+              "model_layers",
+              "vocab_size"
+            ],
+            "description": "Name of the performance metric"
+          },
+          "value": {
+            "type": "number",
+            "description": "Numeric value of the metric"
+          },
+          "unit": {
+            "type": "string",
+            "possible_values": [
+              "probability",
+              "raw_logit",
+              "count", 
+              "tokens"
+            ],
+            "description": "Unit of measurement for the metric"
+          }
+        }
+      }
+    },
+    
+    "common_fields": {
+      "event": {
+        "type": "string",
+        "required": true,
+        "description": "Type of log event"
+      },
+      "timestamp": {
+        "type": "string",
+        "required": true,
+        "format": "YYYY-MM-DD HH:MM:SS.mmm",
+        "description": "When the event occurred"
+      },
+      "session_id": {
+        "type": "string", 
+        "required": true,
+        "pattern": "sess_[a-f0-9]{8}",
+        "description": "Unique session identifier"
+      }
+    },
+    
+    "data_types": {
+      "probabilities": {
+        "type": "number",
+        "range": [0.0, 1.0],
+        "precision": 6
+      },
+      "logits": {
+        "type": "number", 
+        "typical_range": [10.0, 40.0],
+        "precision": 6
+      },
+      "token_ids": {
+        "type": "number",
+        "range": [0, 262143],
+        "description": "Valid token IDs in the vocabulary"
+      },
+      "execution_times": {
+        "type": "number",
+        "unit": "microseconds",
+        "typical_range": [1000, 200000]
+      },
+      "layer_ids": {
+        "type": "number",
+        "range": [0, 25],
+        "description": "Valid layer identifiers"
+      }
+    },
+    
+    "log_levels": {
+      "MINIMAL": {
+        "events": ["session_start", "session_end"],
+        "description": "Only session-level events"
+      },
+      "DETAILED": {
+        "events": ["session_start", "session_end", "step_begin", "step_end", "performance_metric"],
+        "description": "Includes step-level metrics"
+      },
+      "VERBOSE": {
+        "events": ["session_start", "session_end", "step_begin", "step_end", "sampling_state", "performance_metric"],
+        "description": "Full detailed logging including sampling states"
+      }
+    },
+    
+    "file_configuration": {
+      "format": "JSONL",
+      "encoding": "UTF-8",
+      "line_separator": "\\n",
+      "default_path": "./inference_trace.log",
+      "rotation": {
+        "enabled": false,
+        "max_size_mb": 100,
+        "max_files": 10
+      }
+    },
+    
+    "performance_considerations": {
+      "sampling_state_overhead": "High - contains full layer details",
+      "recommended_production_level": "DETAILED",
+      "recommended_debug_level": "VERBOSE",
+      "estimated_log_size": {
+        "per_token_minimal": "~200 bytes",
+        "per_token_detailed": "~500 bytes", 
+        "per_token_verbose": "~8000 bytes"
+      }
+    },
+    
+    "example_configurations": {
+      "production": {
+        "level": "DETAILED",
+        "file_path": "./logs/llama_production.log",
+        "rotation_enabled": true
+      },
+      "development": {
+        "level": "VERBOSE", 
+        "file_path": "./logs/llama_debug.log",
+        "rotation_enabled": false
+      },
+      "benchmark": {
+        "level": "MINIMAL",
+        "file_path": "./logs/llama_benchmark.log", 
+        "rotation_enabled": false
+      }
+    }
+  }
+}
