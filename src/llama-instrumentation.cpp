@@ -84,6 +84,26 @@ std::string llama_token_info::to_json() const {
     return ss.str();
 }
 
+std::string llama_layer_info::to_json() const {
+    std::stringstream ss;
+    ss << std::fixed << std::setprecision(6);
+    ss << "{";
+    ss << "\"layer_id\":" << layer_id << ",";
+    ss << "\"layer_type\":\"" << layer_type << "\",";
+    ss << "\"operation\":\"" << operation << "\",";
+    ss << "\"execution_time_us\":" << execution_time.count() << ",";
+    ss << "\"layer_metrics\":{";
+    bool first = true;
+    for (const auto& [key, value] : layer_metrics) {
+        if (!first) ss << ",";
+        ss << "\"" << key << "\":" << value;
+        first = false;
+    }
+    ss << "}";
+    ss << "}";
+    return ss.str();
+}
+
 std::string llama_sampling_state::to_json() const {
     std::stringstream ss;
     ss << std::fixed << std::setprecision(6);
@@ -106,6 +126,12 @@ std::string llama_sampling_state::to_json() const {
         ss << top_probs[i];
     }
     ss << "],";
+    ss << "\"top_token_texts\":[";
+    for (size_t i = 0; i < top_token_texts.size(); ++i) {
+        if (i > 0) ss << ",";
+        ss << "\"" << top_token_texts[i] << "\"";
+    }
+    ss << "],";
     ss << "\"selected_token\":" << selected_token << ",";
     ss << "\"selected_prob\":" << selected_prob << ",";
     ss << "\"sampling_method\":\"" << sampling_method << "\",";
@@ -116,7 +142,13 @@ std::string llama_sampling_state::to_json() const {
         ss << "\"" << key << "\":" << value;
         first = false;
     }
-    ss << "}";
+    ss << "},";
+    ss << "\"layer_details\":[";
+    for (size_t i = 0; i < layer_details.size(); ++i) {
+        if (i > 0) ss << ",";
+        ss << layer_details[i].to_json();
+    }
+    ss << "]";
     ss << "}";
     return ss.str();
 }

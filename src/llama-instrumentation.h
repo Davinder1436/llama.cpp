@@ -63,15 +63,28 @@ struct llama_token_info {
     std::string to_json() const;
 };
 
-// Sampling state information
+// Layer-specific operation details
+struct llama_layer_info {
+    int layer_id;
+    std::string layer_type;  // "attention", "feed_forward", "norm", etc.
+    std::string operation;   // "self_attention", "mlp", "layer_norm", etc.
+    std::chrono::microseconds execution_time;
+    std::map<std::string, double> layer_metrics;
+    
+    std::string to_json() const;
+};
+
+// Enhanced sampling state information with layer details
 struct llama_sampling_state {
     std::vector<double> logits_sample;  // Top N logits
     std::vector<int> top_tokens;        // Top N token IDs
-    std::vector<double> top_probs;      // Top N probabilities
+    std::vector<double> top_probs;      // Top N probabilities after softmax
+    std::vector<std::string> top_token_texts;  // Human-readable token texts
     int selected_token;
     double selected_prob;
     std::string sampling_method;
     std::map<std::string, double> sampling_params;
+    std::vector<llama_layer_info> layer_details;  // Per-layer processing info
     
     std::string to_json() const;
 };
