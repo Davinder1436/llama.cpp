@@ -269,7 +269,7 @@ void llama_instrumentation::end_step(const std::string& notes) {
 }
 
 void llama_instrumentation::log_input_tokens(const llama_token* tokens, int n_tokens, 
-                                           const struct llama_vocab* vocab) {
+                                           const struct llama_vocab* /* vocab */) {
     if (!enabled_ || level_ < llama_instr_level::MINIMAL) return;
     
     input_tokens_.clear();
@@ -301,7 +301,7 @@ void llama_instrumentation::log_input_tokens(const llama_token* tokens, int n_to
 }
 
 void llama_instrumentation::log_output_token(llama_token token, double probability, 
-                                           const struct llama_vocab* vocab) {
+                                           const struct llama_vocab* /* vocab */) {
     if (!enabled_) return;
     
     llama_token_info info;
@@ -407,7 +407,7 @@ llama_tensor_metadata llama_instrumentation::extract_tensor_metadata(const struc
     if (tensor->type != GGML_TYPE_F32 && tensor->type != GGML_TYPE_F16) {
         // For educational logging, calculate compression ratio
         size_t uncompressed_bytes = ggml_nelements(tensor) * sizeof(float);
-        double compression_ratio = (double)uncompressed_bytes / (double)metadata.memory_bytes;
+        (void)uncompressed_bytes; // Suppress unused variable warning
         // Note: This information could be added to logs in future versions
     }
     
@@ -432,7 +432,7 @@ double llama_instrumentation::get_compression_ratio(const struct ggml_tensor* te
 
 std::string llama_instrumentation::get_current_timestamp() {
     auto now = std::chrono::high_resolution_clock::now();
-    auto time_t = std::chrono::high_resolution_clock::to_time_t(now);
+    auto time_t = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
     auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()) % 1000;
     
     std::stringstream ss;
