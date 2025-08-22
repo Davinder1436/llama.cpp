@@ -91,8 +91,8 @@ static bool load_model() {
         // Create context
         std::cout << "⚙️ Creating inference context..." << std::endl;
         llama_context_params ctx_params = llama_context_default_params();
-        ctx_params.n_ctx = 512;      // Context length
-        ctx_params.n_batch = 32;     // Batch size  
+        ctx_params.n_ctx = 2048;     // Increased context length for longer generations
+        ctx_params.n_batch = 64;     // Batch size  
         ctx_params.n_threads = 4;    // CPU threads
         
         llama_context* ctx_ptr = llama_init_from_model(model_ptr, ctx_params);
@@ -168,17 +168,28 @@ static std::string run_inference_with_logs(const std::string& prompt, const std:
         
         // Generate tokens with proper stopping conditions
         int max_tokens = 512; // Reasonable limit but much higher
+        int context_size = 2048; // Match the context length
         std::vector<llama_token> all_tokens = prompt_tokens;
         std::string generated_text = "";
+        
+        // Calculate remaining context space
+        int remaining_context = context_size - prompt_tokens.size() - 50; // Leave some buffer
+        max_tokens = std::min(max_tokens, remaining_context);
         
         // Get stopping tokens for Gemma model
         llama_token eos_token = llama_vocab_eos(g_server_state.vocab);
         llama_token end_of_turn_token = 106; // <end_of_turn> token for Gemma
         
         std::cout << "🎯 Starting generation with max_tokens=" << max_tokens << std::endl;
+        std::cout << "🎯 Prompt tokens: " << prompt_tokens.size() << ", remaining context: " << remaining_context << std::endl;
         std::cout << "🛑 Stop tokens: EOS=" << eos_token << ", end_of_turn=" << end_of_turn_token << std::endl;
         
         for (int i = 0; i < max_tokens; i++) {
+            // Check if we're approaching context limit
+            if (all_tokens.size() >= context_size - 10) {
+                std::cout << "🛑 Approaching context limit, stopping generation" << std::endl;
+                break;
+            }
             // Get logits and sample next token
             float* logits = llama_get_logits_ith(g_server_state.ctx, -1);
             if (logits == nullptr) {
