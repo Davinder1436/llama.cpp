@@ -150,6 +150,10 @@ public:
     void log_performance_metric(const std::string& metric_name, 
                               double value, const std::string& unit = "");
     
+    // Model metrics (comprehensive one-time logging)
+    void log_model_metrics(const struct llama_model* model, 
+                          const struct llama_context* ctx = nullptr);
+    
     // Utility methods
     static llama_tensor_metadata extract_tensor_metadata(const struct ggml_tensor* tensor,
                                                         const std::string& operation);

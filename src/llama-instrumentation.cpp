@@ -234,7 +234,8 @@ void llama_instrumentation::begin_step(const std::string& step_name, int layer_i
     current_layer_idx_ = layer_id;
     step_start_time_ = std::chrono::high_resolution_clock::now();
     
-    if (level_ >= llama_instr_level::DETAILED) {
+    // Only log step_begin in VERBOSE mode to reduce noise
+    if (level_ >= llama_instr_level::VERBOSE) {
         std::stringstream entry;
         entry << "{\"event\":\"step_begin\",\"timestamp\":\"" << get_current_timestamp() 
               << "\",\"step_id\":" << current_step_id_ 
@@ -251,18 +252,22 @@ void llama_instrumentation::end_step(const std::string& notes) {
     auto end_time = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end_time - step_start_time_);
     
-    llama_step_metrics metrics;
-    metrics.step_name = current_step_name_;
-    metrics.step_id = current_step_id_;
-    metrics.layer_id = current_layer_idx_;
-    metrics.execution_time = duration;
-    metrics.notes = notes;
-    
-    std::stringstream entry;
-    entry << "{\"event\":\"step_end\",\"timestamp\":\"" << get_current_timestamp() 
-          << "\",\"metrics\":" << metrics.to_json() 
-          << ",\"session_id\":\"" << session_id_ << "\"}";
-    write_log_entry(entry.str());
+    // Only log step_end in VERBOSE mode to reduce noise
+    if (level_ >= llama_instr_level::VERBOSE) {
+        llama_step_metrics metrics;
+        metrics.step_name = current_step_name_;
+        metrics.step_id = current_step_id_;
+        metrics.layer_id = current_layer_idx_;
+        metrics.execution_time = duration;
+        metrics.notes = notes;
+        
+        std::stringstream entry;
+        entry << "{\"event\":\"step_end\",\"timestamp\":\"" << get_current_timestamp() 
+              << "\",\"duration_ms\":" << duration.count() / 1000.0
+              << ",\"metrics\":" << metrics.to_json() 
+              << ",\"session_id\":\"" << session_id_ << "\"}";
+        write_log_entry(entry.str());
+    }
     
     current_step_id_++;
     current_step_name_.clear();
@@ -370,13 +375,63 @@ void llama_instrumentation::log_performance_metric(const std::string& metric_nam
                                                   double value, const std::string& unit) {
     if (!enabled_) return;
     
-    std::stringstream entry;
-    entry << "{\"event\":\"performance_metric\",\"timestamp\":\"" << get_current_timestamp() 
-          << "\",\"metric_name\":\"" << metric_name
-          << "\",\"value\":" << value
-          << ",\"unit\":\"" << unit
-          << "\",\"session_id\":\"" << session_id_ << "\"}";
-    write_log_entry(entry.str());
+    // Only log performance metrics in VERBOSE mode to reduce noise
+    if (level_ >= llama_instr_level::VERBOSE) {
+        std::stringstream entry;
+        entry << "{\"event\":\"performance_metric\",\"timestamp\":\"" << get_current_timestamp() 
+              << "\",\"metric_name\":\"" << metric_name
+              << "\",\"value\":" << value
+              << ",\"unit\":\"" << unit
+              << "\",\"session_id\":\"" << session_id_ << "\"}";
+        write_log_entry(entry.str());
+    }
+}
+
+void llama_instrumentation::log_model_metrics(const struct llama_model* model, 
+                                             const struct llama_context* ctx) {
+    if (!enabled_ || !model) return;
+    
+    // Always log model metrics in DETAILED mode (important for monitoring)
+    if (level_ >= llama_instr_level::DETAILED) {
+        std::stringstream entry;
+        entry << "{\"event\":\"model_metrics\",\"timestamp\":\"" << get_current_timestamp() 
+              << "\",\"session_id\":\"" << session_id_ << "\",";
+        
+        // Basic model information
+        entry << "\"model_info\":{";
+        entry << "\"n_vocab\":" << llama_vocab_n_tokens(llama_model_get_vocab(model)) << ",";
+        entry << "\"n_ctx_train\":" << llama_model_n_ctx_train(model) << ",";
+        entry << "\"n_embd\":" << llama_model_n_embd(model) << ",";
+        entry << "\"n_layer\":" << llama_model_n_layer(model) << ",";
+        entry << "\"n_head\":" << llama_model_n_head(model) << ",";
+        entry << "\"n_head_kv\":" << llama_model_n_head_kv(model) << ",";
+        entry << "\"model_size_mb\":" << (llama_model_size(model) / (1024 * 1024));
+        entry << "}";
+        
+        // Context information if provided
+        if (ctx) {
+            entry << ",\"context_info\":{";
+            entry << "\"n_ctx\":" << llama_n_ctx(ctx) << ",";
+            entry << "\"n_batch\":" << llama_n_batch(ctx) << ",";
+            entry << "\"n_ubatch\":" << llama_n_ubatch(ctx) << ",";
+            entry << "\"n_seq_max\":" << llama_n_seq_max(ctx);
+            entry << "}";
+        }
+        
+        // Memory usage estimates
+        entry << ",\"memory_usage\":{";
+        entry << "\"model_size_bytes\":" << llama_model_size(model);
+        if (ctx) {
+            // Estimate context memory usage
+            size_t ctx_size_estimate = llama_n_ctx(ctx) * llama_model_n_embd(model) * 
+                                     llama_model_n_layer(model) * 2 * sizeof(float); // rough estimate
+            entry << ",\"context_size_estimate_bytes\":" << ctx_size_estimate;
+        }
+        entry << "}";
+        
+        entry << "}";
+        write_log_entry(entry.str());
+    }
 }
 
 // Static utility methods
@@ -467,6 +522,7 @@ void llama_instrumentation::write_log_entry(const std::string& entry) {
 void llama_instrumentation::write_session_header(const std::string& prompt, const struct llama_model* model) {
     if (!enabled_) return;
     
+    // Simplified session start log
     std::stringstream header;
     header << "{\"event\":\"session_start\",\"timestamp\":\"" << get_current_timestamp() 
            << "\",\"session_id\":\"" << session_id_ 
@@ -482,16 +538,7 @@ void llama_instrumentation::write_session_header(const std::string& prompt, cons
         else header << c;
     }
     
-    header << "\",\"model_info\":{";
-    if (model) {
-        header << "\"n_vocab\":" << llama_vocab_n_tokens(llama_model_get_vocab(model)) << ",";
-        header << "\"n_ctx_train\":" << llama_model_n_ctx_train(model) << ",";
-        header << "\"n_embd\":" << llama_model_n_embd(model) << ",";
-        header << "\"n_layer\":" << llama_model_n_layer(model) << ",";
-        header << "\"n_head\":" << llama_model_n_head(model);
-    }
-    header << "}}";
-    
+    header << "\"}";
     write_log_entry(header.str());
 }
 

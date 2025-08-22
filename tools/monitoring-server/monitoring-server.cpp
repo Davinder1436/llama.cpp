@@ -133,6 +133,9 @@ static std::string run_inference_with_logs(const std::string& prompt, const std:
         // Begin instrumented session
         instr.begin_session(prompt, g_server_state.model);
         
+        // Log comprehensive model metrics (one-time)
+        instr.log_model_metrics(g_server_state.model, g_server_state.ctx);
+        
         // Tokenize the prompt
         const int n_prompt = -llama_tokenize(g_server_state.vocab, prompt.c_str(), prompt.length(), NULL, 0, true, true);
         std::vector<llama_token> prompt_tokens(n_prompt);
@@ -311,12 +314,8 @@ static std::string run_inference_with_logs(const std::string& prompt, const std:
             std::string step_name = "token_generation_" + std::to_string(i);
             instr.begin_step(step_name, 0);
             
-            // Log performance metrics
-            instr.log_performance_metric("token_probability", top_tokens_with_probs[0].second, "probability");
-            instr.log_performance_metric("token_logit", token_logits[0].second, "raw_logit");
-            instr.log_performance_metric("model_layers", total_layers, "count");
-            instr.log_performance_metric("vocab_size", vocab_size, "tokens");
-            instr.flush(); // Force immediate write to disk
+            // Note: Performance metrics are now only logged in VERBOSE mode
+            // Focus on sampling state which is most important for token generation monitoring
             
             // Prepare batch for next token
             llama_batch next_batch = llama_batch_init(1, 0, 1);
