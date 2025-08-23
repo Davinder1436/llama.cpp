@@ -204,6 +204,21 @@ if (LLAMA_BUILD_COMMON AND LLAMA_BUILD_EXAMPLES)
     add_subdirectory(pocs)
 endif()
 
+# Add test instrumentation programs
+if (LLAMA_BUILD_COMMON)
+    if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/test_inference_instrumentation.cpp")
+        add_executable(test_inference_instrumentation test_inference_instrumentation.cpp)
+        target_link_libraries(test_inference_instrumentation PRIVATE llama common)
+        target_include_directories(test_inference_instrumentation PRIVATE include src common)
+    endif()
+    
+    if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/test_resource_instrumentation.cpp")
+        add_executable(test_resource_instrumentation test_resource_instrumentation.cpp)
+        target_link_libraries(test_resource_instrumentation PRIVATE llama common)
+        target_include_directories(test_resource_instrumentation PRIVATE include src common)
+    endif()
+endif()
+
 if (LLAMA_BUILD_COMMON AND LLAMA_BUILD_TOOLS)
     add_subdirectory(tools)
 endif()

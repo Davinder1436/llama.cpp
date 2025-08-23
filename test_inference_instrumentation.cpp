@@ -16,7 +16,7 @@ int main(int argc, char ** argv) {
         std::cout << "🔧 Initializing llama backend..." << std::endl;
         
         // 1. Initialize the instrumentation system
-        llama_instrumentation instr(llama_instr_level::DETAILED, "gemma_inference_trace.log");
+        llama_instrumentation instr(llama_instr_level::VERBOSE, "gemma_inference_trace.log");
         instr.enable();
         
         // 2. Load the Gemma-3 1B model

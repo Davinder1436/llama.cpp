@@ -1,5 +1,6 @@
 #include "llama-model.h"
 #include "llama-instrumentation.h"
+#include "../llama-resource-integration.h"
 
 #include "llama-impl.h"
 #include "llama-mmap.h"
@@ -10361,6 +10362,11 @@ struct llm_build_gemma3_iswa : public llm_graph_context {
                 ggml_tensor * Vcur = build_lora_mm(model.layers[il].wv, cur);
                 cb(Vcur, "Vcur", il);
 
+                // Track QKV matrix operations
+                llama_resource_hook_qkv("Q", cur, model.layers[il].wq, Qcur, il);
+                llama_resource_hook_qkv("K", cur, model.layers[il].wk, Kcur, il);
+                llama_resource_hook_qkv("V", cur, model.layers[il].wv, Vcur, il);
+
                 Qcur = ggml_reshape_3d(ctx0, Qcur, n_embd_head, n_head,    n_tokens);
                 Kcur = ggml_reshape_3d(ctx0, Kcur, n_embd_head, n_head_kv, n_tokens);
                 Vcur = ggml_reshape_3d(ctx0, Vcur, n_embd_head, n_head_kv, n_tokens);
@@ -10391,6 +10397,9 @@ struct llm_build_gemma3_iswa : public llm_graph_context {
                 cur = build_attn(inp_attn,
                         model.layers[il].wo, NULL,
                         Qcur, Kcur, Vcur, nullptr, nullptr, 1.0f, il);
+
+                // Track attention computation
+                llama_resource_hook_attention(Qcur, Kcur, Vcur, cur, il);
             }
 
             if (il == n_layer - 1 && inp_out_ids) {

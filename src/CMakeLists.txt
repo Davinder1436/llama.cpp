@@ -8,6 +8,7 @@ llama_add_compile_flags()
 
 add_library(llama
             ../include/llama.h
+            ../include/llama-resource-instrumentation.h
             llama.cpp
             llama-adapter.cpp
             llama-arch.cpp
@@ -20,6 +21,9 @@ add_library(llama
             llama-hparams.cpp
             llama-impl.cpp
             llama-instrumentation.cpp
+            llama-resource-instrumentation.cpp
+            ../llama-resource-integration.cpp
+            ../llama-resource-integration.h
             llama-io.cpp
             llama-kv-cache-unified.cpp
             llama-kv-cache-unified-iswa.cpp

@@ -1,0 +1,102 @@
+diff --git a/src/llama-model.cpp b/src/llama-model.cpp
+index 1234567..8901234 100644
+--- a/src/llama-model.cpp
++++ b/src/llama-model.cpp
+@@ -26,6 +26,7 @@
+ #include "llama-model.h" 
+ #include "llama-vocab.h"
+ #include "llama-hparams.h"
++#include "llama-resource-integration.h"  // Add resource tracking integration
+ 
+ #include <algorithm>
+ #include <array>
+@@ -10343,17 +10344,25 @@ struct llm_build_gemma3_iswa : public llm_graph_context {
+         for (int il = 0; il < n_layer; ++il) {
+             const float freq_base_l  = model.get_rope_freq_base (cparams, il);
+             const float freq_scale_l = model.get_rope_freq_scale(cparams, il);
++            
++            // RESOURCE TRACKING: Start layer processing
++            llama_resource_hook_layer_start(il);
+ 
+             // norm
+             cur = build_norm(inpL, model.layers[il].attn_norm, NULL, LLM_NORM_RMS, il);
+             cb(cur, "attn_norm", il);
++            
++            // RESOURCE TRACKING: Start attention component
++            llama_resource_hook_attention_start(il);
+ 
+             // self-attention
+             {
+                 // compute Q and K and RoPE them
+                 ggml_tensor * Qcur = build_lora_mm(model.layers[il].wq, cur);
+                 cb(Qcur, "Qcur", il);
++                
++                // RESOURCE TRACKING: Track Q matrix computation
++                llama_resource_hook_qkv("Q", cur, model.layers[il].wq, Qcur, il);
+ 
+                 ggml_tensor * Kcur = build_lora_mm(model.layers[il].wk, cur);
+                 cb(Kcur, "Kcur", il);
++                
++                // RESOURCE TRACKING: Track K matrix computation
++                llama_resource_hook_qkv("K", cur, model.layers[il].wk, Kcur, il);
+ 
+                 ggml_tensor * Vcur = build_lora_mm(model.layers[il].wv, cur);
+                 cb(Vcur, "Vcur", il);
++                
++                // RESOURCE TRACKING: Track V matrix computation
++                llama_resource_hook_qkv("V", cur, model.layers[il].wv, Vcur, il);
+ 
+                 Qcur = ggml_reshape_3d(ctx0, Qcur, n_embd_head, n_head,    n_tokens);
+                 Kcur = ggml_reshape_3d(ctx0, Kcur, n_embd_head, n_head_kv, n_tokens);
+@@ -10379,6 +10388,9 @@ struct llm_build_gemma3_iswa : public llm_graph_context {
+ 
+                 cur = build_attn(inp_attn,
+                         model.layers[il].wo, NULL,
+                         Qcur, Kcur, Vcur, nullptr, nullptr, 1.0f, il);
++                        
++                // RESOURCE TRACKING: Track full attention computation
++                llama_resource_hook_attention(Qcur, Kcur, Vcur, cur, il);
+             }
+ 
+             if (il == n_layer - 1 && inp_out_ids) {
+@@ -10392,6 +10404,12 @@ struct llm_build_gemma3_iswa : public llm_graph_context {
+                     LLM_NORM_RMS, il);
+             cb(cur, "attn_post_norm", il);
+ 
++            // RESOURCE TRACKING: End attention component  
++            llama_resource_hook_attention_end(il);
++            
++            // RESOURCE TRACKING: Handoff from attention to MLP
++            llama_resource_hook_attention_to_mlp_handoff(il);
++
+             ggml_tensor * sa_out = ggml_add(ctx0, cur, inpL);
+             cb(sa_out, "sa_out", il);
+ 
+@@ -10402,12 +10420,16 @@ struct llm_build_gemma3_iswa : public llm_graph_context {
+ 
+             // feed-forward network
+             {
+                 cur = build_ffn(cur,
+                         model.layers[il].ffn_up,   NULL, NULL,
+                         model.layers[il].ffn_gate, NULL, NULL,
+                         model.layers[il].ffn_down, NULL, NULL,
+                         NULL,
+                         LLM_FFN_GELU, LLM_FFN_PAR, il);
+                 cb(cur, "ffn_out", il);
++                
++                // RESOURCE TRACKING: Track MLP computation 
++                llama_resource_hook_mlp(sa_out, model.layers[il].ffn_gate, 
++                                       model.layers[il].ffn_up, model.layers[il].ffn_down, cur, il);
+             }
+ 
+             cur = build_norm(cur,
+@@ -10420,6 +10442,9 @@ struct llm_build_gemma3_iswa : public llm_graph_context {
+             cur = build_cvec(cur, il);
+             cb(cur, "l_out", il);
+ 
++            // RESOURCE TRACKING: End layer processing
++            llama_resource_hook_layer_end(il);
++
+             // input for next layer
+             inpL = cur;
+         }
