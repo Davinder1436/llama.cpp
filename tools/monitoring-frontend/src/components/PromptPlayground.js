@@ -182,9 +182,42 @@ function PromptPlayground({ onSubmit, isLoading, disabled, error, response }) {
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (prompt.trim() && !isLoading && !disabled) {
-      onSubmit(prompt.trim());
+    
+    // Enhanced sanitization of the prompt before submission
+    let sanitizedPrompt;
+    try {
+      sanitizedPrompt = prompt
+        // Remove control characters
+        .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/g, '')
+        // Remove BOM and other zero-width characters
+        .replace(/[\uFEFF\u200B\u200C\u200D\u2060]/g, '')
+        // Remove unpaired surrogates
+        .replace(/[\uD800-\uDFFF]/g, '')
+        // Normalize quotes to standard ASCII
+        .replace(/[\u201C\u201D]/g, '"') // Replace smart double quotes
+        .replace(/[\u2018\u2019]/g, "'") // Replace smart single quotes
+        .trim();
+
+      // Test JSON serialization
+      JSON.stringify({ test: sanitizedPrompt });
+    } catch (error) {
+      console.error('Prompt sanitization failed:', error);
+      return;
     }
+      
+    if (sanitizedPrompt && !isLoading && !disabled) {
+      console.log('Submitting sanitized prompt:', sanitizedPrompt);
+      onSubmit(sanitizedPrompt);
+    }
+  };
+
+  const handleInputChange = (e) => {
+    // Enhanced filtering as users type
+    const cleanValue = e.target.value
+      .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/g, '')
+      .replace(/[\uFEFF\u200B\u200C\u200D\u2060]/g, '')
+      .replace(/[\uD800-\uDFFF]/g, '');
+    setPrompt(cleanValue);
   };
 
   const handleKeyDown = (e) => {
@@ -207,7 +240,7 @@ function PromptPlayground({ onSubmit, isLoading, disabled, error, response }) {
             <PromptInput
               id="prompt"
               value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
+              onChange={handleInputChange}
               onKeyDown={handleKeyDown}
               placeholder="Ask me anything... (Press Ctrl/Cmd + Enter to submit)"
               disabled={disabled || isLoading}
@@ -223,12 +256,15 @@ function PromptPlayground({ onSubmit, isLoading, disabled, error, response }) {
             
             <SubmitButton 
               type="submit" 
-              disabled={!prompt.trim() || isLoading || disabled}
+              disabled={!prompt.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\uFEFF\u200B\u200C\u200D\u2060\uD800-\uDFFF]/g, '').trim() || isLoading || disabled}
             >
               {isLoading ? (
                 <>
                   <Loader size={16} className="spinner" />
-                  Generating...
+                  🧠 Processing inference...
+                  <div style={{ fontSize: '0.8rem', marginTop: '5px', opacity: '0.7' }}>
+                    This may take 1-2 minutes as the model generates detailed logs
+                  </div>
                 </>
               ) : (
                 <>
