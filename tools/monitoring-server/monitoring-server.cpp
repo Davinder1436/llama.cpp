@@ -1,7 +1,9 @@
 #include "llama.h"
 #include "llama-instrumentation.h"
 #include "common.h"
+#include "sampling.h"
 #include "log.h"
+#include "common/base64.hpp"
 
 #include <iostream>
 #include <string>
@@ -32,7 +34,58 @@
 
 using json = nlohmann::json;
 
-// Global state for the monitoring server
+// Sampling configuration structure
+struct SamplingConfig {
+    std::string method = "greedy";  // greedy, top_k, top_p, temperature
+    int32_t top_k = 40;
+    float top_p = 0.9f;
+    float temperature = 1.0f;
+    float min_p = 0.05f;
+    uint32_t seed = LLAMA_DEFAULT_SEED;
+    
+    // Convert to common_params_sampling
+    common_params_sampling to_common_params() const {
+        common_params_sampling params;
+        
+        // Set default parameters
+        params.top_k = 40;
+        params.top_p = 0.9f;
+        params.temp = 1.0f;
+        params.min_p = 0.05f;
+        params.seed = LLAMA_DEFAULT_SEED;
+        
+        // Clear samplers and add based on method
+        params.samplers.clear();
+        
+        if (method == "greedy") {
+            // For greedy, we use temperature = 0.0 which makes it greedy
+            params.temp = 0.0f;
+            params.samplers.push_back(COMMON_SAMPLER_TYPE_TEMPERATURE);
+        } else if (method == "top_k") {
+            params.top_k = this->top_k;
+            params.temp = this->temperature;
+            params.samplers.push_back(COMMON_SAMPLER_TYPE_TOP_K);
+            params.samplers.push_back(COMMON_SAMPLER_TYPE_TEMPERATURE);
+        } else if (method == "top_p") {
+            params.top_p = this->top_p;
+            params.temp = this->temperature;
+            params.samplers.push_back(COMMON_SAMPLER_TYPE_TOP_P);
+            params.samplers.push_back(COMMON_SAMPLER_TYPE_TEMPERATURE);
+        } else if (method == "temperature") {
+            params.temp = this->temperature;
+            params.samplers.push_back(COMMON_SAMPLER_TYPE_TEMPERATURE);
+        } else {
+            // Default to greedy if unknown method
+            params.temp = 0.0f;
+            params.samplers.push_back(COMMON_SAMPLER_TYPE_TEMPERATURE);
+        }
+        
+        // Always add the final distribution sampler
+        params.seed = this->seed;
+        
+        return params;
+    }
+};
 struct MonitoringServerState {
     llama_model* model;
     llama_context* ctx;
@@ -113,7 +166,7 @@ static bool load_model() {
 }
 
 // Function to perform inference and generate logs (similar to test_inference_instrumentation.cpp)
-static std::string run_inference_with_logs(const std::string& prompt, const std::string& session_id) {
+static std::string run_inference_with_logs(const std::string& prompt, const std::string& session_id, const SamplingConfig& sampling_config) {
     if (!g_server_state.model_loaded) {
         return "";
     }
@@ -128,7 +181,11 @@ static std::string run_inference_with_logs(const std::string& prompt, const std:
         llama_instrumentation instr(llama_instr_level::DETAILED, log_path);
         instr.enable();
         
+        // Initialize sampling parameters
+        common_params_sampling sampling_params = sampling_config.to_common_params();
+        
         std::cout << "📊 Starting instrumented inference for session: " << session_id << std::endl;
+        std::cout << "🎲 Sampling method: " << sampling_config.method << std::endl;
         
         // Begin instrumented session
         instr.begin_session(prompt, g_server_state.model);
@@ -183,6 +240,13 @@ static std::string run_inference_with_logs(const std::string& prompt, const std:
         llama_token eos_token = llama_vocab_eos(g_server_state.vocab);
         llama_token end_of_turn_token = 106; // <end_of_turn> token for Gemma
         
+        // Initialize the sampler
+        struct common_sampler * sampler = common_sampler_init(g_server_state.model, sampling_params);
+        if (!sampler) {
+            std::cerr << "❌ Failed to initialize sampler!" << std::endl;
+            return "";
+        }
+        
         std::cout << "🎯 Starting generation with max_tokens=" << max_tokens << std::endl;
         std::cout << "🎯 Prompt tokens: " << prompt_tokens.size() << ", remaining context: " << remaining_context << std::endl;
         std::cout << "🛑 Stop tokens: EOS=" << eos_token << ", end_of_turn=" << end_of_turn_token << std::endl;
@@ -193,61 +257,43 @@ static std::string run_inference_with_logs(const std::string& prompt, const std:
                 std::cout << "🛑 Approaching context limit, stopping generation" << std::endl;
                 break;
             }
-            // Get logits and sample next token
-            float* logits = llama_get_logits_ith(g_server_state.ctx, -1);
-            if (logits == nullptr) {
-                std::cout << "❌ Failed to get logits!" << std::endl;
-                break;
-            }
             
-            int vocab_size = llama_vocab_n_tokens(g_server_state.vocab);
+            // Use the common sampler to get the next token
+            llama_token next_token = common_sampler_sample(sampler, g_server_state.ctx, -1);
             
-            // Enhanced probability distribution analysis
-            std::vector<std::pair<llama_token, float>> token_logits;
-            for (llama_token token_id = 0; token_id < vocab_size; token_id++) {
-                token_logits.push_back({token_id, logits[token_id]});
-            }
-            
-            // Sort by logits (descending)
-            std::sort(token_logits.begin(), token_logits.end(), 
-                     [](const auto& a, const auto& b) { return a.second > b.second; });
-            
-            // Calculate softmax probabilities for top tokens
-            std::vector<std::pair<llama_token, float>> top_tokens_with_probs;
-            const int top_k = 10;
-            
-            float max_logit = token_logits[0].second;
-            float sum_exp = 0.0f;
-            
-            for (int k = 0; k < std::min(top_k, (int)token_logits.size()); k++) {
-                float exp_val = std::exp(token_logits[k].second - max_logit);
-                sum_exp += exp_val;
-                top_tokens_with_probs.push_back({token_logits[k].first, exp_val});
-            }
-            
-            for (auto& pair : top_tokens_with_probs) {
-                pair.second /= sum_exp;
-            }
+            // Get the token data array for instrumentation
+            llama_token_data_array * cur_p = common_sampler_get_candidates(sampler);
             
             // Create sampling state for instrumentation
             llama_sampling_state sampling_state;
-            if (!top_tokens_with_probs.empty()) {
-                sampling_state.selected_token = top_tokens_with_probs[0].first;
-                sampling_state.selected_prob = top_tokens_with_probs[0].second;
-            } else {
-                sampling_state.selected_token = 0;
-                sampling_state.selected_prob = 0.0f;
-            }
-            sampling_state.sampling_method = "greedy";
+            sampling_state.selected_token = next_token;
+            sampling_state.sampling_method = sampling_config.method;
             
-            // Fill top tokens and probabilities for instrumentation
-            for (int k = 0; k < std::min(top_k, (int)top_tokens_with_probs.size()); k++) {
-                sampling_state.top_tokens.push_back(top_tokens_with_probs[k].first);
-                sampling_state.top_probs.push_back(top_tokens_with_probs[k].second);
+            // Find selected token probability
+            sampling_state.selected_prob = 0.0f;
+            for (size_t j = 0; j < cur_p->size; j++) {
+                if (cur_p->data[j].id == next_token) {
+                    sampling_state.selected_prob = cur_p->data[j].p;
+                    break;
+                }
+            }
+            
+            // Fill sampling parameters
+            sampling_state.sampling_params["temperature"] = sampling_config.temperature;
+            sampling_state.sampling_params["top_k"] = sampling_config.top_k;
+            sampling_state.sampling_params["top_p"] = sampling_config.top_p;
+            sampling_state.sampling_params["seed"] = sampling_config.seed;
+            
+            // Fill top tokens and probabilities for instrumentation (up to 10)
+            int top_count = std::min(10, (int)cur_p->size);
+            for (int k = 0; k < top_count; k++) {
+                sampling_state.top_tokens.push_back(cur_p->data[k].id);
+                sampling_state.top_probs.push_back(cur_p->data[k].p);
+                sampling_state.logits_sample.push_back(cur_p->data[k].logit);
                 
                 // Convert token to readable text
                 char token_str[256];
-                int n_chars = llama_token_to_piece(g_server_state.vocab, top_tokens_with_probs[k].first, 
+                int n_chars = llama_token_to_piece(g_server_state.vocab, cur_p->data[k].id, 
                                                   token_str, sizeof(token_str), 0, true);
                 std::string token_text;
                 if (n_chars > 0 && n_chars < (int)sizeof(token_str)) {
@@ -256,14 +302,6 @@ static std::string run_inference_with_logs(const std::string& prompt, const std:
                     token_text = "<unknown>";
                 }
                 sampling_state.top_token_texts.push_back(token_text);
-                
-                // Find logit value
-                for (int j = 0; j < (int)token_logits.size(); j++) {
-                    if (token_logits[j].first == top_tokens_with_probs[k].first) {
-                        sampling_state.logits_sample.push_back(token_logits[j].second);
-                        break;
-                    }
-                }
             }
             
             // Add layer information (simulated)
@@ -293,14 +331,14 @@ static std::string run_inference_with_logs(const std::string& prompt, const std:
             instr.log_sampling_state(sampling_state);
             instr.flush(); // Force immediate write to disk
             
-            // Select the greedy token
-            llama_token next_token = top_tokens_with_probs[0].first;
-            
             // Check for end of sequence with multiple stopping conditions
             if (next_token == eos_token || next_token == end_of_turn_token) {
                 std::cout << "🏁 End of sequence reached (token=" << next_token << ")" << std::endl;
                 break;
             }
+            
+            // Accept the sampled token
+            common_sampler_accept(sampler, next_token, true);
             
             // Convert token to text
             char token_str[256];
@@ -343,7 +381,8 @@ static std::string run_inference_with_logs(const std::string& prompt, const std:
         // End instrumented session
         instr.end_session();
         
-        // Free the batch
+        // Free the sampler and batch
+        common_sampler_free(sampler);
         llama_batch_free(batch);
         
         int generated_tokens = all_tokens.size() - prompt_tokens.size();
@@ -369,19 +408,31 @@ static std::string run_inference_with_logs(const std::string& prompt, const std:
 
 // Function to stream logs from a file
 static std::string read_log_file(const std::string& file_path) {
-    std::ifstream file(file_path);
+    std::ifstream file(file_path, std::ios::binary);
     if (!file.is_open()) {
         return "";
     }
     
     std::stringstream buffer;
     buffer << file.rdbuf();
-    return buffer.str();
+    std::string data = buffer.str();
+    // Best-effort: replace any isolated invalid bytes with space to avoid JSON UTF-8 parser traps on the client
+    for (size_t i = 0; i < data.size(); ++i) {
+        unsigned char c = static_cast<unsigned char>(data[i]);
+        // Control chars below 0x09 except \n(0x0A) and \r(0x0D), and DEL range 0x7F-0x9F can upset some JSON parsers
+        if ((c < 0x09) || (c >= 0x0B && c <= 0x0C) || (c >= 0x0E && c <= 0x1F) || (c >= 0x7F && c <= 0x9F)) {
+            // Preserve newlines and carriage returns
+            if (c != 0x0A && c != 0x0D) {
+                data[i] = ' ';
+            }
+        }
+    }
+    return data;
 }
 
 // Function to read log file from a specific line offset (for streaming)
 static std::vector<std::string> read_log_lines_from_offset(const std::string& file_path, size_t from_line = 0) {
-    std::ifstream file(file_path);
+    std::ifstream file(file_path, std::ios::binary);
     std::vector<std::string> lines;
     
     if (!file.is_open()) {
@@ -454,11 +505,37 @@ int main(int /* argc */, char** /* argv */) {
             std::string prompt = request_json["prompt"];
             std::string session_id = generate_session_id();
             
+            // Parse sampling configuration
+            SamplingConfig sampling_config;
+            if (request_json.contains("sampling")) {
+                json sampling_json = request_json["sampling"];
+                
+                if (sampling_json.contains("method")) {
+                    sampling_config.method = sampling_json["method"];
+                }
+                if (sampling_json.contains("top_k")) {
+                    sampling_config.top_k = sampling_json["top_k"];
+                }
+                if (sampling_json.contains("top_p")) {
+                    sampling_config.top_p = sampling_json["top_p"];
+                }
+                if (sampling_json.contains("temperature")) {
+                    sampling_config.temperature = sampling_json["temperature"];
+                }
+                if (sampling_json.contains("min_p")) {
+                    sampling_config.min_p = sampling_json["min_p"];
+                }
+                if (sampling_json.contains("seed")) {
+                    sampling_config.seed = sampling_json["seed"];
+                }
+            }
+            
             std::cout << "📥 Received request for session: " << session_id << std::endl;
             std::cout << "💭 Prompt: " << prompt << std::endl;
+            std::cout << "🎲 Sampling method: " << sampling_config.method << std::endl;
             
             // Run inference asynchronously and get log file path
-            std::string log_file_path = run_inference_with_logs(prompt, session_id);
+            std::string log_file_path = run_inference_with_logs(prompt, session_id, sampling_config);
             
             if (log_file_path.empty()) {
                 json error_response;
@@ -471,14 +548,10 @@ int main(int /* argc */, char** /* argv */) {
             // Wait a bit for logs to be written
             std::this_thread::sleep_for(std::chrono::milliseconds(500));
             
-            // Read the log file
-            std::string log_content = read_log_file(log_file_path);
-            
-            // Return response with session info and logs
+            // Return response with session info only; logs are fetched via GET /logs/{session_id}
             json response;
             response["session_id"] = session_id;
             response["log_file_path"] = log_file_path;
-            response["logs"] = log_content;
             response["status"] = "completed";
             
             res.set_content(response.dump(), "application/json");
@@ -507,13 +580,14 @@ int main(int /* argc */, char** /* argv */) {
             return;
         }
         
-        std::string log_content = read_log_file(it->second);
-        
-        json response;
-        response["session_id"] = session_id;
-        response["logs"] = log_content;
-        
-        res.set_content(response.dump(), "application/json");
+    // Read raw log content and return base64 to avoid UTF-8 validation issues in JSON
+    std::string log_content = read_log_file(it->second);
+
+    json response;
+    response["session_id"] = session_id;
+    response["logs_b64"] = base64::encode(log_content);
+
+    res.set_content(response.dump(), "application/json");
     });
 
     // Streaming logs endpoint with offset support
@@ -542,13 +616,18 @@ int main(int /* argc */, char** /* argv */) {
         }
         
         std::vector<std::string> new_lines = read_log_lines_from_offset(it->second, from_line);
-        
+
         json response;
         response["session_id"] = session_id;
         response["from_line"] = from_line;
-        response["new_lines"] = new_lines;
+        // To avoid large UTF-8 blobs in JSON, return base64 lines
+        json new_lines_b64 = json::array();
+        for (const auto & line : new_lines) {
+            new_lines_b64.push_back(base64::encode(line));
+        }
+        response["new_lines_b64"] = new_lines_b64;
         response["total_lines"] = from_line + new_lines.size();
-        
+
         res.set_content(response.dump(), "application/json");
     });
     
@@ -573,11 +652,12 @@ int main(int /* argc */, char** /* argv */) {
     const int port = 8080;
     std::cout << "🌐 Starting HTTP server on port " << port << "..." << std::endl;
     std::cout << "📍 Endpoints:" << std::endl;
-    std::cout << "   POST /log-monitoring - Start inference with logs" << std::endl;
+    std::cout << "   POST /log-monitoring - Start inference with logs and sampling options" << std::endl;
     std::cout << "   GET  /logs/{session_id} - Get logs for a session" << std::endl;
     std::cout << "   GET  /logs/{session_id}/stream?from_line=N - Stream logs from line N" << std::endl;
     std::cout << "   GET  /sessions - List active sessions" << std::endl;
     std::cout << "   GET  /health - Health check" << std::endl;
+    std::cout << "📝 Sampling methods supported: greedy, top_k, top_p, temperature" << std::endl;
     
     if (!server.listen("0.0.0.0", port)) {
         std::cerr << "❌ Failed to start server on port " << port << std::endl;

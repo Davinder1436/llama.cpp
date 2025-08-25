@@ -1,12 +1,13 @@
 # Llama.cpp Monitoring Server
 
-A HTTP server that provides detailed inference monitoring and logging capabilities for llama.cpp models. This server integrates with the llama-instrumentation system to provide real-time insights into the inference process.
+A HTTP server that provides detailed inference monitoring and logging capabilities for llama.cpp models with support for multiple sampling methods. This server integrates with the llama-instrumentation system to provide real-time insights into the inference process.
 
 ## Features
 
 - **Real-time Inference Monitoring**: Track token generation, layer processing, and performance metrics
+- **Multiple Sampling Methods**: Support for greedy, top-k, top-p, and temperature sampling
 - **Detailed Logging**: Session-based logging with unique identifiers stored in individual log files
-- **RESTful API**: Clean HTTP endpoints for easy integration
+- **RESTful API**: Clean HTTP endpoints for easy integration with sampling configuration
 - **Stream-based Responses**: Get complete inference logs after processing
 - **Model Analytics**: Layer-by-layer processing information and sampling state details
 
@@ -35,14 +36,36 @@ The server starts on port 8080 by default and loads the Gemma-3 1B model from `d
 ### API Endpoints
 
 #### POST /log-monitoring
-Start an inference session with detailed logging.
+Start an inference session with detailed logging and sampling configuration.
 
 **Request:**
 ```json
 {
-    "prompt": "what is the roadmap i can follow to learn AI/ML and get a decent job in it?"
+    "prompt": "what is the roadmap i can follow to learn AI/ML and get a decent job in it?",
+    "sampling": {
+        "method": "top_k",
+        "top_k": 50,
+        "temperature": 0.8,
+        "top_p": 0.9,
+        "min_p": 0.05,
+        "seed": 1234
+    }
 }
 ```
+
+**Sampling Methods:**
+- `"greedy"` - Always select the most probable token
+- `"top_k"` - Sample from top K most probable tokens
+- `"top_p"` - Nucleus sampling with cumulative probability threshold
+- `"temperature"` - Temperature scaling for probability distribution
+
+**Sampling Parameters:**
+- `method` (string): Sampling method (default: "greedy")  
+- `top_k` (integer): Number of top tokens to consider (default: 40)
+- `top_p` (float): Cumulative probability threshold (default: 0.9)
+- `temperature` (float): Temperature scaling factor (default: 1.0)
+- `min_p` (float): Minimum probability threshold (default: 0.05)
+- `seed` (integer): Random seed for reproducibility (default: system time)
 
 **Response:**
 ```json
@@ -116,7 +139,12 @@ Logs are stored as newline-delimited JSON (NDJSON) with events including:
         "top_token_texts": ["\\n\\n", "\\n", " "],
         "selected_token": 108,
         "selected_prob": 0.999451,
-        "sampling_method": "greedy",
+        "sampling_method": "top_k",
+        "sampling_params": {
+            "temperature": 0.8,
+            "top_k": 50,
+            "seed": 1234
+        },
         "layer_details": [
             {
                 "layer_id": 0,
@@ -133,6 +161,61 @@ Logs are stored as newline-delimited JSON (NDJSON) with events including:
     },
     "session_id": "sess_fcf5c630"
 }
+```
+
+## Sample CURL Commands
+
+### Greedy Sampling
+```bash
+curl -X POST http://localhost:8080/log-monitoring \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "Explain machine learning in simple terms",
+    "sampling": {
+      "method": "greedy"
+    }
+  }'
+```
+
+### Top-K Sampling
+```bash
+curl -X POST http://localhost:8080/log-monitoring \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "Write a creative story about AI",
+    "sampling": {
+      "method": "top_k",
+      "top_k": 40,
+      "temperature": 0.8
+    }
+  }'
+```
+
+### Top-P Sampling
+```bash
+curl -X POST http://localhost:8080/log-monitoring \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "Describe the future of technology",
+    "sampling": {
+      "method": "top_p",
+      "top_p": 0.95,
+      "temperature": 0.7
+    }
+  }'
+```
+
+### Temperature Sampling
+```bash
+curl -X POST http://localhost:8080/log-monitoring \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "Creative writing: Imagine a world where...",
+    "sampling": {
+      "method": "temperature",
+      "temperature": 1.2
+    }
+  }'
 ```
 
 ## Integration

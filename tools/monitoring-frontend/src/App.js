@@ -172,6 +172,7 @@ function App() {
   const [response, setResponse] = useState('');
   const [currentPage, setCurrentPage] = useState('dashboard'); // 'dashboard' or 'animation'
   const [initialPrompt, setInitialPrompt] = useState('');
+  const [currentSamplingConfig, setCurrentSamplingConfig] = useState({ method: 'greedy' });
 
   // Parse logs into categorized events
   const sessionStartEvent = logs.find(log => log.event === 'session_start');
@@ -210,7 +211,7 @@ function App() {
     }
   };
 
-  const handlePromptSubmit = async (prompt) => {
+  const handlePromptSubmit = async (prompt, samplingConfig = { method: 'greedy' }) => {
     setIsLoading(true);
     setError(null);
     setServerStatus('loading');
@@ -218,6 +219,7 @@ function App() {
     setResponse('');
     setCurrentSession(null);
     setInitialPrompt(prompt);
+    setCurrentSamplingConfig(samplingConfig); // Store the sampling config
 
     try {
       // Enhanced sanitization and validation of the prompt
@@ -259,11 +261,16 @@ function App() {
       console.log('Sending request to:', 'http://localhost:8080/log-monitoring');
       console.log('Original prompt length:', prompt.length);
       console.log('Sanitized prompt length:', sanitizedPrompt.length);
+      console.log('Sampling config:', samplingConfig);
       
-      // Create request body with safe JSON serialization
+      // Create request body with safe JSON serialization including sampling config
       let requestBody;
       try {
-        requestBody = JSON.stringify({ prompt: sanitizedPrompt });
+        const requestData = { 
+          prompt: sanitizedPrompt,
+          sampling: samplingConfig
+        };
+        requestBody = JSON.stringify(requestData);
         console.log('Request body length:', requestBody.length);
         console.log('Request body preview:', requestBody.substring(0, 200) + '...');
       } catch (jsonError) {
@@ -343,16 +350,30 @@ function App() {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout for log polling
       
-      const response = await fetch(`http://localhost:8080/logs/${sessionId}`, {
+  const response = await fetch(`http://localhost:8080/logs/${sessionId}`, {
         signal: controller.signal
       });
       
       clearTimeout(timeoutId);
       if (response.ok) {
         const data = await response.json();
-        
+
+        // Support base64 logs to avoid UTF-8 issues
+        let rawLogText = '';
+        if (data.logs_b64) {
+          try {
+            // atob handles base64; replace non-ASCII gracefully
+            rawLogText = atob(data.logs_b64);
+          } catch (e) {
+            console.warn('Failed to decode base64 logs, falling back:', e);
+            rawLogText = data.logs || '';
+          }
+        } else {
+          rawLogText = data.logs || '';
+        }
+
         // Parse the log content into individual events
-        const logLines = data.logs.split('\n').filter(line => line.trim());
+        const logLines = rawLogText.split('\n').filter(line => line.trim());
         const parsedLogs = logLines.map(line => {
           try {
             return JSON.parse(line);
@@ -503,6 +524,7 @@ function App() {
           <TokenAnimation 
             samplingEvents={samplingEvents}
             initialPrompt={initialPrompt}
+            samplingConfig={currentSamplingConfig}
             onBack={() => setCurrentPage('dashboard')}
           />
         )}

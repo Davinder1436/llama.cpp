@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import styled from 'styled-components';
-import { Send, Loader, AlertCircle, MessageSquare, Sparkles } from 'lucide-react';
+import { Send, Loader, AlertCircle, MessageSquare, Sparkles, Settings } from 'lucide-react';
 
 const PlaygroundContainer = styled.div`
   background: rgba(255, 255, 255, 0.03);
@@ -68,6 +68,97 @@ const PromptInput = styled.textarea`
     opacity: 0.5;
     cursor: not-allowed;
   }
+`;
+
+// Sampling Configuration Section
+const SamplingSection = styled.div`
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 24px;
+`;
+
+const SamplingHeader = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+  color: rgba(255, 255, 255, 0.9);
+  font-weight: 500;
+`;
+
+const MethodSelector = styled.div`
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+  margin-bottom: 16px;
+`;
+
+const MethodButton = styled.button`
+  background: ${props => props.active ? 
+    'linear-gradient(135deg, #667eea 0%, #764ba2 100%)' : 
+    'rgba(255, 255, 255, 0.05)'};
+  border: 1px solid ${props => props.active ? '#667eea' : 'rgba(255, 255, 255, 0.1)'};
+  border-radius: 8px;
+  color: white;
+  padding: 8px 12px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  
+  &:hover {
+    background: ${props => props.active ? 
+      'linear-gradient(135deg, #667eea 0%, #764ba2 100%)' : 
+      'rgba(255, 255, 255, 0.08)'};
+    border-color: ${props => props.active ? '#667eea' : 'rgba(255, 255, 255, 0.2)'};
+  }
+`;
+
+const ParametersGrid = styled.div`
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 16px;
+`;
+
+const ParameterGroup = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+`;
+
+const ParameterLabel = styled.label`
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.8);
+  font-weight: 500;
+`;
+
+const ParameterInput = styled.input`
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  color: white;
+  padding: 8px 12px;
+  font-size: 0.9rem;
+  outline: none;
+  transition: all 0.2s ease;
+  
+  &:focus {
+    border-color: #667eea;
+    box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.1);
+  }
+  
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+`;
+
+const ParameterDescription = styled.div`
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.5);
+  margin-top: 4px;
 `;
 
 const ActionRow = styled.div`
@@ -179,6 +270,21 @@ const LoadingIndicator = styled.div`
 
 function PromptPlayground({ onSubmit, isLoading, disabled, error, response }) {
   const [prompt, setPrompt] = useState('');
+  const [samplingConfig, setSamplingConfig] = useState({
+    method: 'greedy',
+    top_k: 40,
+    top_p: 0.9,
+    temperature: 0.8,
+    min_p: 0.05,
+    seed: Math.floor(Math.random() * 1000000)
+  });
+
+  const samplingMethods = [
+    { key: 'greedy', label: 'Greedy', description: 'Always picks most likely token' },
+    { key: 'top_k', label: 'Top-K', description: 'Sample from K most likely tokens' },
+    { key: 'top_p', label: 'Top-P', description: 'Nucleus sampling' },
+    { key: 'temperature', label: 'Temperature', description: 'Temperature scaling' }
+  ];
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -207,7 +313,8 @@ function PromptPlayground({ onSubmit, isLoading, disabled, error, response }) {
       
     if (sanitizedPrompt && !isLoading && !disabled) {
       console.log('Submitting sanitized prompt:', sanitizedPrompt);
-      onSubmit(sanitizedPrompt);
+      console.log('Sampling config:', samplingConfig);
+      onSubmit(sanitizedPrompt, samplingConfig);
     }
   };
 
@@ -218,6 +325,20 @@ function PromptPlayground({ onSubmit, isLoading, disabled, error, response }) {
       .replace(/[\uFEFF\u200B\u200C\u200D\u2060]/g, '')
       .replace(/[\uD800-\uDFFF]/g, '');
     setPrompt(cleanValue);
+  };
+
+  const handleSamplingChange = (key, value) => {
+    setSamplingConfig(prev => ({
+      ...prev,
+      [key]: value
+    }));
+  };
+
+  const handleMethodChange = (method) => {
+    setSamplingConfig(prev => ({
+      ...prev,
+      method
+    }));
   };
 
   const handleKeyDown = (e) => {
@@ -248,6 +369,82 @@ function PromptPlayground({ onSubmit, isLoading, disabled, error, response }) {
             />
           </InputSection>
 
+          <SamplingSection>
+            <SamplingHeader>
+              <Settings size={16} />
+              Sampling Configuration
+            </SamplingHeader>
+            
+            <MethodSelector>
+              {samplingMethods.map(method => (
+                <MethodButton
+                  key={method.key}
+                  type="button"
+                  active={samplingConfig.method === method.key}
+                  onClick={() => handleMethodChange(method.key)}
+                >
+                  {method.label}
+                </MethodButton>
+              ))}
+            </MethodSelector>
+
+            <ParametersGrid>
+              {samplingConfig.method === 'top_k' && (
+                <ParameterGroup>
+                  <ParameterLabel>Top-K Value</ParameterLabel>
+                  <ParameterInput
+                    type="number"
+                    min="1"
+                    max="100"
+                    value={samplingConfig.top_k}
+                    onChange={(e) => handleSamplingChange('top_k', parseInt(e.target.value))}
+                  />
+                  <ParameterDescription>Number of top tokens to consider (1-100)</ParameterDescription>
+                </ParameterGroup>
+              )}
+
+              {samplingConfig.method === 'top_p' && (
+                <ParameterGroup>
+                  <ParameterLabel>Top-P Value</ParameterLabel>
+                  <ParameterInput
+                    type="number"
+                    min="0.1"
+                    max="1.0"
+                    step="0.05"
+                    value={samplingConfig.top_p}
+                    onChange={(e) => handleSamplingChange('top_p', parseFloat(e.target.value))}
+                  />
+                  <ParameterDescription>Cumulative probability threshold (0.1-1.0)</ParameterDescription>
+                </ParameterGroup>
+              )}
+
+              {(samplingConfig.method === 'temperature' || samplingConfig.method === 'top_k' || samplingConfig.method === 'top_p') && (
+                <ParameterGroup>
+                  <ParameterLabel>Temperature</ParameterLabel>
+                  <ParameterInput
+                    type="number"
+                    min="0.1"
+                    max="2.0"
+                    step="0.1"
+                    value={samplingConfig.temperature}
+                    onChange={(e) => handleSamplingChange('temperature', parseFloat(e.target.value))}
+                  />
+                  <ParameterDescription>Randomness factor (0.1=focused, 2.0=creative)</ParameterDescription>
+                </ParameterGroup>
+              )}
+
+              <ParameterGroup>
+                <ParameterLabel>Random Seed</ParameterLabel>
+                <ParameterInput
+                  type="number"
+                  value={samplingConfig.seed}
+                  onChange={(e) => handleSamplingChange('seed', parseInt(e.target.value))}
+                />
+                <ParameterDescription>For reproducible results</ParameterDescription>
+              </ParameterGroup>
+            </ParametersGrid>
+          </SamplingSection>
+
           <ActionRow hasError={!!error} hasResponse={!!response}>
             <CharCount>
               <MessageSquare size={14} />
@@ -269,7 +466,7 @@ function PromptPlayground({ onSubmit, isLoading, disabled, error, response }) {
               ) : (
                 <>
                   <Send size={16} />
-                  Send Prompt
+                  Send Prompt ({samplingConfig.method})
                 </>
               )}
             </SubmitButton>
@@ -288,7 +485,7 @@ function PromptPlayground({ onSubmit, isLoading, disabled, error, response }) {
             <ResponseSection>
               <ResponseHeader>
                 <Sparkles size={16} />
-                Generated Response
+                Generated Response (Method: {samplingConfig.method})
               </ResponseHeader>
               <ResponseText>{response}</ResponseText>
             </ResponseSection>
@@ -297,7 +494,7 @@ function PromptPlayground({ onSubmit, isLoading, disabled, error, response }) {
           {isLoading && !response && (
             <LoadingIndicator>
               <Loader size={16} className="spinner" />
-              Processing your request... This may take a moment.
+              Processing your request using {samplingConfig.method} sampling...
             </LoadingIndicator>
           )}
         </form>

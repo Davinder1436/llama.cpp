@@ -104,6 +104,29 @@ std::string llama_layer_info::to_json() const {
     return ss.str();
 }
 
+// Helper to escape JSON string
+static std::string escape_json_string(const std::string& input) {
+    std::ostringstream ss;
+    for (char c : input) {
+        switch (c) {
+            case '"': ss << "\\\""; break;
+            case '\\': ss << "\\\\"; break;
+            case '\b': ss << "\\b"; break;
+            case '\f': ss << "\\f"; break;
+            case '\n': ss << "\\n"; break;
+            case '\r': ss << "\\r"; break;
+            case '\t': ss << "\\t"; break;
+            default:
+                if (static_cast<unsigned char>(c) < 0x20) {
+                    ss << "\\u" << std::hex << std::setw(4) << std::setfill('0') << (int)c;
+                } else {
+                    ss << c;
+                }
+        }
+    }
+    return ss.str();
+}
+
 std::string llama_sampling_state::to_json() const {
     std::stringstream ss;
     ss << std::fixed << std::setprecision(6);
@@ -129,7 +152,7 @@ std::string llama_sampling_state::to_json() const {
     ss << "\"top_token_texts\":[";
     for (size_t i = 0; i < top_token_texts.size(); ++i) {
         if (i > 0) ss << ",";
-        ss << "\"" << top_token_texts[i] << "\"";
+        ss << "\"" << escape_json_string(top_token_texts[i]) << "\"";
     }
     ss << "],";
     ss << "\"selected_token\":" << selected_token << ",";
